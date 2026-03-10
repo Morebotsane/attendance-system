@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     
     # API Settings
     API_V1_PREFIX: str = "/api/v1"
-    SECRET_KEY: str = "your-secret-key-change-in-production"  # Change this!
+    SECRET_KEY: str = "St200800821$"  # Change this!
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
