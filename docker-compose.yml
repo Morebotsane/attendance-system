@@ -1,6 +1,29 @@
 version: '3.8'
 
 services:
+  # Backend Application
+  backend:
+    build: ./backend
+    container_name: attendance_backend
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/attendance_db
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=your_secret_key # Change this in production
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+    networks:
+      - attendance_network
+    restart: on-failure
+
   # PostgreSQL Database
   db:
     image: postgres:15-alpine

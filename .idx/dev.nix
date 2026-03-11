@@ -1,40 +1,49 @@
-# To learn more about how to use Nix to configure your environment
-# see: https://firebase.google.com/docs/studio/customize-workspace
 { pkgs, ... }: {
   # Which nixpkgs channel to use.
-  channel = "stable-24.05"; # or "unstable"
+  channel = "stable-23.11"; # Or "unstable"
 
   # Use https://search.nixos.org/packages to find packages
   packages = [
-    # pkgs.go
-    # pkgs.python311
-    # pkgs.python311Packages.pip
-    # pkgs.nodejs_20
-    # pkgs.nodePackages.nodemon
+    pkgs.docker
+    pkgs.docker-compose
+    pkgs.python311
+    pkgs.python311Packages.pip
+    pkgs.python311Packages.virtualenv
+    pkgs.nodejs_20
+    pkgs.git
+    pkgs.postgresql_15
+    pkgs.redis
   ];
 
   # Sets environment variables in the workspace
-  env = {};
+  env = {
+    # DATABASE_URL = "postgresql://localhost:5432/hospital";
+  };
+
   idx = {
     # Search for the extensions you want on https://open-vsx.org/ and use "publisher.id"
     extensions = [
-      # "vscodevim.vim"
+      "ms-python.python"
+      "ms-python.vscode-pylance"
+      "bungcip.better-toml"
+      "GitHub.copilot"
+      "eamodio.gitlens"
     ];
 
-    # Enable previews
+    # Enable previews and customize configuration
     previews = {
       enable = true;
       previews = {
-        # web = {
-        #   # Example: run "npm run dev" with PORT set to IDX's defined port for previews,
-        #   # and show it in IDX's web preview panel
-        #   command = ["npm" "run" "dev"];
-        #   manager = "web";
-        #   env = {
-        #     # Environment variables to set for your server
-        #     PORT = "$PORT";
-        #   };
-        # };
+        # The key "backend" is the identifier - no need for an "id" field inside!
+        backend = {
+          command = [
+            "bash" "-c" 
+            "cd backend && source venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port $PORT"
+          ];
+          manager = "web";
+          # Optionally specify the working directory
+          # cwd = "backend";
+        };
       };
     };
 
@@ -42,13 +51,22 @@
     workspace = {
       # Runs when a workspace is first created
       onCreate = {
-        # Example: install JS dependencies from NPM
-        # npm-install = "npm install";
+        # Create virtual environment
+        create-venv = "cd backend && python -m venv venv";
+        # Install dependencies
+        install-deps = "cd backend && source venv/bin/activate && pip install -r requirements.txt";
+        # Setup database services
+        setup-postgres = "pg_ctl -D $HOME/postgres-data start || initdb $HOME/postgres-data -A trust && pg_ctl -D $HOME/postgres-data start";
+        setup-redis = "redis-server --daemonize yes || true";
       };
+      
       # Runs when the workspace is (re)started
       onStart = {
-        # Example: start a background task to watch and re-build backend code
-        # watch-backend = "npm run watch-backend";
+        # Start database services if not running
+        start-postgres = "pg_ctl -D $HOME/postgres-data status || pg_ctl -D $HOME/postgres-data start";
+        start-redis = "redis-cli ping || redis-server --daemonize yes";
+        # Run migrations
+        run-migrations = "cd backend && source venv/bin/activate && alembic upgrade head";
       };
     };
   };
