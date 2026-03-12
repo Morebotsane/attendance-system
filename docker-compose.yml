@@ -1,29 +1,6 @@
 version: '3.8'
 
 services:
-  # Backend Application
-  backend:
-    build: ./backend
-    container_name: attendance_backend
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/attendance_db
-      - REDIS_URL=redis://redis:6379/0
-      - SECRET_KEY=your_secret_key # Change this in production
-      - ALGORITHM=HS256
-      - ACCESS_TOKEN_EXPIRE_MINUTES=30
-    networks:
-      - attendance_network
-    restart: on-failure
-
   # PostgreSQL Database
   db:
     image: postgres:15-alpine
@@ -41,10 +18,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-    networks:
-      - attendance_network
 
-  # Redis for caching and Celery broker
+  # Redis for caching
   redis:
     image: redis:7-alpine
     container_name: attendance_redis
@@ -57,13 +32,31 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-    networks:
-      - attendance_network
+
+  # FastAPI Backend
+  api:
+    build: ./backend
+    container_name: attendance_api
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./backend/app/storage:/app/app/storage
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/attendance_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - ENVIRONMENT=development
+      - SECRET_KEY=dev-secret-key-change-in-production
+      - QR_ENCRYPTION_KEY=n1Q-apF7_5Cc9DfALBprfHt7Ce7iYgweembYx4Eau_w=  # We'll generate this
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   postgres_data:
   redis_data:
-
-networks:
-  attendance_network:
-    driver: bridge
