@@ -40,6 +40,8 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:5173",  # Vite default
         "http://127.0.0.1:3000",
+        "https://8000-firebase-attendance-system-1773135120418.cluster-vpxjqdstfzgs6qeiaf7rdlsqrc.cloudworkstations.dev",
+        "https://80-firebase-attendance-system-1773135120418.cluster-vpxjqdstfzgs6qeiaf7rdlsqrc.cloudworkstations.dev"
     ]
     
     # Security
