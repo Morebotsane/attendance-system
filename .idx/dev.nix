@@ -1,73 +1,56 @@
 { pkgs, ... }: {
-  # Which nixpkgs channel to use.
-  channel = "stable-23.11"; # Or "unstable"
+  channel = "stable-23.11";
 
-  # Use https://search.nixos.org/packages to find packages
   packages = [
-    pkgs.docker
     pkgs.docker-compose
     pkgs.python311
     pkgs.python311Packages.pip
     pkgs.python311Packages.virtualenv
     pkgs.nodejs_20
     pkgs.git
-    pkgs.postgresql_15
-    pkgs.redis
+    # REMOVE postgresql_15 and redis - Docker handles these!
   ];
 
-  # Sets environment variables in the workspace
-  env = {
-    # DATABASE_URL = "postgresql://localhost:5432/hospital";
-  };
+  # THIS IS THE MAGIC LINE - Enable Docker service
+  services.docker.enable = true;
+
+  env = {};
 
   idx = {
-    # Search for the extensions you want on https://open-vsx.org/ and use "publisher.id"
     extensions = [
       "ms-python.python"
       "ms-python.vscode-pylance"
+      "ms-azuretools.vscode-docker"  # Added Docker extension
       "bungcip.better-toml"
       "GitHub.copilot"
       "eamodio.gitlens"
     ];
 
-    # Enable previews and customize configuration
     previews = {
       enable = true;
       previews = {
-        # The key "backend" is the identifier - no need for an "id" field inside!
         backend = {
           command = [
             "bash" "-c" 
             "cd backend && source venv/bin/activate && uvicorn main:app --reload --host 0.0.0.0 --port $PORT"
           ];
           manager = "web";
-          # Optionally specify the working directory
-          # cwd = "backend";
         };
       };
     };
 
-    # Workspace lifecycle hooks
     workspace = {
-      # Runs when a workspace is first created
       onCreate = {
-        # Create virtual environment
         create-venv = "cd backend && python -m venv venv";
-        # Install dependencies
         install-deps = "cd backend && source venv/bin/activate && pip install -r requirements.txt";
-        # Setup database services
-        setup-postgres = "pg_ctl -D $HOME/postgres-data start || initdb $HOME/postgres-data -A trust && pg_ctl -D $HOME/postgres-data start";
-        setup-redis = "redis-server --daemonize yes || true";
+        # REMOVE setup-postgres and setup-redis - Docker handles this
       };
       
-      # Runs when the workspace is (re)started
       onStart = {
-        # Start database services if not running
-        start-postgres = "pg_ctl -D $HOME/postgres-data status || pg_ctl -D $HOME/postgres-data start";
-        start-redis = "redis-cli ping || redis-server --daemonize yes";
-        # Run migrations
+        # Start Docker services
+        start-docker = "cd ~/attendance-system && docker-compose up -d";
         run-migrations = "cd backend && source venv/bin/activate && alembic upgrade head";
       };
     };
   };
-}
+} 
