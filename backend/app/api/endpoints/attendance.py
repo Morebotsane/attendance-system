@@ -1,35 +1,68 @@
 """
-Attendance endpoints for check-in, check-out, and attendance queries
+Attendance endpoints for check-in/check-out operations
 """
 
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from datetime import datetime, timedelta
-from typing import List, Optional
 import uuid
+import json
 
 from app.db.session import get_db
-from app.schemas.schemas import (
-    CheckInRequest, CheckInResponse,
-    CheckOutRequest, CheckOutResponse,
-    AttendanceRecordResponse
-)
 from app.models.models import (
-    Employee, AttendanceRecord, AttendanceAuditLog,
-    AttendanceFlag, AttendanceStatus, FlagType
+    Employee, AttendanceRecord, AttendanceAuditLog, 
+    AttendanceStatus, FlagType, AttendanceFlag
+)
+from app.schemas.schemas import (
+    AttendanceRecordResponse,
+    CheckInRequest, CheckOutRequest
 )
 from app.services.qr_service import qr_service
 from app.services.geofence_service import geofence_service
 from app.services.photo_service import photo_service
 
-
 router = APIRouter()
 
 
-@router.post("/check-in", response_model=CheckInResponse)
+def serialize_for_json(obj):
+    """Convert datetime objects to ISO format strings for JSON storage"""
+    if isinstance(obj, dict):
+        return {k: serialize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_for_json(item) for item in obj]
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    else:
+        return obj
+
+
+async def create_flag(
+    db: AsyncSession,
+    attendance_id: uuid.UUID | None,
+    flag_type: FlagType,
+    description: str,
+    severity: str = "medium"
+):
+    """Helper to create attendance flags"""
+    flag = AttendanceFlag(
+        attendance_record_id=attendance_id,
+        flag_type=flag_type,
+        description=description,
+        severity=severity,
+        is_resolved=False
+    )
+    db.add(flag)
+    await db.commit()
+    return flag
+
+
+@router.post("/check-in", response_model=AttendanceRecordResponse, status_code=status.HTTP_201_CREATED)
 async def check_in(
-    request: CheckInRequest,
+    qr_code_data: str = Form(...),
+    latitude: float = Form(...),
+    longitude: float = Form(...),
+    device_id: str = Form(...),
     photo: UploadFile = File(...),
     db: AsyncSession = Depends(get_db)
 ):
@@ -46,7 +79,7 @@ async def check_in(
     """
     
     # 1. Decode and validate QR code
-    qr_result = qr_service.decode_qr_data(request.qr_code_data)
+    qr_result = qr_service.decode_qr_data(qr_code_data)
     
     if not qr_result.get("valid"):
         raise HTTPException(
@@ -78,8 +111,8 @@ async def check_in(
         geo_validation = await geofence_service.validate_location(
             db=db,
             department_id=str(employee.department_id),
-            user_lat=request.latitude,
-            user_lon=request.longitude
+            user_lat=latitude,
+            user_lon=longitude
         )
         
         if not geo_validation["valid"]:
@@ -134,196 +167,142 @@ async def check_in(
         )
     
     # 5. Create attendance record
-    now = datetime.utcnow()
+    # Serialize validation metadata to ensure JSON compatibility
+    validation_metadata = serialize_for_json({
+        "geofence": geo_validation,
+        "qr_validation": qr_result
+    })
     
-    attendance = AttendanceRecord(
+    attendance_record = AttendanceRecord(
         employee_id=employee.id,
-        check_in_time=now,
-        check_in_latitude=request.latitude,
-        check_in_longitude=request.longitude,
+        check_in_time=datetime.utcnow(),
+        check_in_latitude=latitude,
+        check_in_longitude=longitude,
         check_in_photo_url=photo_url,
-        check_in_device_id=request.device_id,
+        check_in_device_id=device_id,
         status=AttendanceStatus.ACTIVE,
-        validation_metadata={
-            "geofence": geo_validation,
-            "qr_generated_at": qr_result.get("generated_at").isoformat() if qr_result.get("generated_at") else None
-        }
+        validation_metadata=validation_metadata
     )
     
-    db.add(attendance)
-    await db.commit()
-    await db.refresh(attendance)
+    db.add(attendance_record)
+    await db.flush()
     
     # 6. Create audit log
     audit_log = AttendanceAuditLog(
-        attendance_record_id=attendance.id,
+        attendance_record_id=attendance_record.id,
         employee_id=employee.id,
         action="check_in",
-        timestamp=now,
-        latitude=request.latitude,
-        longitude=request.longitude,
+        timestamp=datetime.utcnow(),
+        latitude=latitude,
+        longitude=longitude,
         photo_url=photo_url,
-        validation_status={"geofence": geo_validation}
+        validation_status=serialize_for_json(geo_validation)
     )
-    
     db.add(audit_log)
-    await db.commit()
     
-    return CheckInResponse(
-        success=True,
-        message=f"Welcome, {employee.first_name}! Check-in successful.",
-        attendance_id=attendance.id,
-        employee_name=f"{employee.first_name} {employee.last_name}",
-        check_in_time=attendance.check_in_time,
-        validation_results=attendance.validation_metadata
-    )
+    await db.commit()
+    await db.refresh(attendance_record)
+    
+    return attendance_record
 
 
-@router.post("/check-out", response_model=CheckOutResponse)
+@router.post("/check-out", response_model=AttendanceRecordResponse)
 async def check_out(
-    request: CheckOutRequest,
+    qr_code_data: str = Form(...),
+    latitude: float = Form(...),
+    longitude: float = Form(...),
+    device_id: str = Form(...),
     photo: UploadFile = File(...),
-    employee_id: uuid.UUID = None,  # Get from auth token in production
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Process employee check-out with geolocation and photo
-    """
+    """Process employee check-out"""
     
-    # Get today's active attendance record
+    # Decode QR code
+    qr_result = qr_service.decode_qr_data(qr_code_data)
+    
+    if not qr_result.get("valid"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid QR code"
+        )
+    
+    employee_id = qr_result["employee_id"]
+    
+    # Find active attendance record
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    result = await db.execute(
+        select(AttendanceRecord).where(
+            and_(
+                AttendanceRecord.employee_id == uuid.UUID(employee_id),
+                AttendanceRecord.check_in_time >= today_start,
+                AttendanceRecord.status == AttendanceStatus.ACTIVE
+            )
+        )
+    )
+    attendance_record = result.scalar_one_or_none()
+    
+    if not attendance_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active check-in found for today"
+        )
+    
+    # Store photo
+    try:
+        photo_url = await photo_service.store_photo(
+            photo=photo,
+            employee_id=str(employee_id),
+            photo_type="check_out"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to store photo: {str(e)}"
+        )
+    
+    # Update record
+    attendance_record.check_out_time = datetime.utcnow()
+    attendance_record.check_out_latitude = latitude
+    attendance_record.check_out_longitude = longitude
+    attendance_record.check_out_photo_url = photo_url
+    attendance_record.check_out_device_id = device_id
+    attendance_record.status = AttendanceStatus.COMPLETED
+    
+    # Create audit log
+    audit_log = AttendanceAuditLog(
+        attendance_record_id=attendance_record.id,
+        employee_id=uuid.UUID(employee_id),
+        action="check_out",
+        timestamp=datetime.utcnow(),
+        latitude=latitude,
+        longitude=longitude,
+        photo_url=photo_url
+    )
+    db.add(audit_log)
+    
+    await db.commit()
+    await db.refresh(attendance_record)
+    
+    return attendance_record
+
+
+@router.get("/today", response_model=list[AttendanceRecordResponse])
+async def get_today_attendance(
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all attendance records for today"""
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
     
     result = await db.execute(
         select(AttendanceRecord).where(
             and_(
-                AttendanceRecord.employee_id == employee_id,
                 AttendanceRecord.check_in_time >= today_start,
-                AttendanceRecord.check_in_time < today_end,
-                AttendanceRecord.status == AttendanceStatus.ACTIVE,
-                AttendanceRecord.check_out_time == None
+                AttendanceRecord.check_in_time < today_end
             )
-        )
-    )
-    attendance = result.scalar_one_or_none()
-    
-    if not attendance:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No active check-in found for today"
-        )
-    
-    # Get employee
-    result = await db.execute(
-        select(Employee).where(Employee.id == employee_id)
-    )
-    employee = result.scalar_one_or_none()
-    
-    # Validate geofence (optional for check-out)
-    if employee.department_id:
-        geo_validation = await geofence_service.validate_location(
-            db=db,
-            department_id=str(employee.department_id),
-            user_lat=request.latitude,
-            user_lon=request.longitude
-        )
-    else:
-        geo_validation = {"valid": True}
-    
-    # Store photo
-    photo_url = await photo_service.store_photo(
-        photo=photo,
-        employee_id=str(employee.id),
-        photo_type="check_out"
+        ).order_by(AttendanceRecord.check_in_time.desc())
     )
     
-    # Update attendance record
-    now = datetime.utcnow()
-    attendance.check_out_time = now
-    attendance.check_out_latitude = request.latitude
-    attendance.check_out_longitude = request.longitude
-    attendance.check_out_photo_url = photo_url
-    attendance.check_out_device_id = request.device_id
-    attendance.status = AttendanceStatus.COMPLETED
-    
-    # Calculate total hours
-    total_hours = (now - attendance.check_in_time).total_seconds() / 3600
-    
-    await db.commit()
-    await db.refresh(attendance)
-    
-    # Create audit log
-    audit_log = AttendanceAuditLog(
-        attendance_record_id=attendance.id,
-        employee_id=employee.id,
-        action="check_out",
-        timestamp=now,
-        latitude=request.latitude,
-        longitude=request.longitude,
-        photo_url=photo_url,
-        validation_status={"geofence": geo_validation}
-    )
-    
-    db.add(audit_log)
-    await db.commit()
-    
-    return CheckOutResponse(
-        success=True,
-        message=f"Goodbye, {employee.first_name}! Check-out successful.",
-        attendance_id=attendance.id,
-        check_out_time=attendance.check_out_time,
-        total_hours=round(total_hours, 2),
-        validation_results={"geofence": geo_validation}
-    )
-
-
-@router.get("/today", response_model=List[AttendanceRecordResponse])
-async def get_today_attendance(
-    department_id: Optional[uuid.UUID] = None,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Get all attendance records for today
-    Optionally filter by department
-    """
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    today_end = today_start + timedelta(days=1)
-    
-    query = select(AttendanceRecord).where(
-        and_(
-            AttendanceRecord.check_in_time >= today_start,
-            AttendanceRecord.check_in_time < today_end
-        )
-    )
-    
-    if department_id:
-        # Join with Employee to filter by department
-        query = query.join(Employee).where(Employee.department_id == department_id)
-    
-    result = await db.execute(query)
     records = result.scalars().all()
-    
     return records
-
-
-async def create_flag(
-    db: AsyncSession,
-    attendance_id: Optional[uuid.UUID],
-    flag_type: FlagType,
-    description: str,
-    severity: str = "medium"
-):
-    """
-    Helper function to create attendance flag
-    """
-    flag = AttendanceFlag(
-        attendance_record_id=attendance_id,
-        flag_type=flag_type,
-        severity=severity,
-        description=description
-    )
-    
-    db.add(flag)
-    await db.commit()
-    
-    return flag
