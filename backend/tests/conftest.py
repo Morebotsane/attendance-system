@@ -5,6 +5,7 @@ Test configuration and fixtures
 import pytest
 import pytest_asyncio
 import asyncio
+import os
 from typing import AsyncGenerator
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -18,8 +19,13 @@ from app.services.qr_service import qr_service
 from main import app
 
 
-# Test database URL - Use PostgreSQL just like production!
-TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@db:5432/attendance_test_db"
+# Test database URL - configurable for different environments
+# Local Docker: postgresql+asyncpg://postgres:postgres@db:5432/attendance_test_db
+# GitHub Actions: postgresql+asyncpg://postgres:postgres@localhost:5432/attendance_test_db
+TEST_DATABASE_URL = os.getenv(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@db:5432/attendance_test_db"
+)
 
 # Create async engine for tests
 test_engine = create_async_engine(
@@ -109,7 +115,6 @@ async def test_admin(db_session: AsyncSession, test_department: Department) -> E
 @pytest_asyncio.fixture
 async def admin_token(test_admin: Employee) -> str:
     """Create an access token for the admin user"""
-    # FIXED: Use correct function signature
     return create_access_token(employee_id=str(test_admin.id))
 
 
