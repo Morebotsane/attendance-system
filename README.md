@@ -37,8 +37,7 @@ docker-compose up -d
 ```
 
 3. Access:
-- API: http://localhost:8000
-- Docs: http://localhost:8000/api/docs
+- API: https://8000-firebase-attendance-system-1773135120418.cluster-vpxjqdstfzgs6qeiaf7rdlsqrc.cloudworkstations.dev/api/docs
 
 See full documentation in `/docs` directory.
 

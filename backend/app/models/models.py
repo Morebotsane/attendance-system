@@ -124,7 +124,7 @@ class AttendanceFlag(BaseModel):
     __tablename__ = "attendance_flags"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    attendance_record_id = Column(UUID(as_uuid=True), ForeignKey("attendance_records.id"), nullable=False, index=True)
+    attendance_record_id = Column(UUID(as_uuid=True), ForeignKey("attendance_records.id"), nullable=True, index=True)
     
     flag_type = Column(Enum(FlagType), nullable=False)
     severity = Column(String(20))
