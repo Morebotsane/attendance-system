@@ -50,7 +50,18 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
       - ENVIRONMENT=development
       - SECRET_KEY=dev-secret-key-change-in-production
-      - QR_ENCRYPTION_KEY=n1Q-apF7_5Cc9DfALBprfHt7Ce7iYgweembYx4Eau_w=
+      - QR_ENCRYPTION_KEY=n1Q-apF7_5Cc9DfALBprfHt7Ce7iYgweembYx4Eau_w=  # We'll generate this
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+
+      # SMS & Email
       - AFRICAS_TALKING_USERNAME=${AFRICAS_TALKING_USERNAME:-sandbox}
       - AFRICAS_TALKING_API_KEY=${AFRICAS_TALKING_API_KEY}
       - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
@@ -62,12 +73,3 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - FROM_EMAIL=${FROM_EMAIL:-}
       - FROM_NAME=${FROM_NAME:-Hospital Attendance System}
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-volumes:
-  postgres_data:
-  redis_data:

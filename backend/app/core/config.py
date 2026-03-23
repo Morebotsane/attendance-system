@@ -85,6 +85,23 @@ class Settings(BaseSettings):
     ENABLE_SMS_NOTIFICATIONS: bool = False
     ENABLE_EMAIL_NOTIFICATIONS: bool = False
     
+    # Africa's Talking SMS
+    AFRICAS_TALKING_USERNAME: str = "sandbox"
+    AFRICAS_TALKING_API_KEY: str = ""
+    
+    # Twilio SMS (Backup)
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_PHONE_NUMBER: str = ""
+    
+    # Email (SMTP)
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    FROM_EMAIL: str = ""
+    FROM_NAME: str = "Hospital Attendance System"
+    
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -104,3 +121,4 @@ def get_settings() -> Settings:
 
 # Create global settings instance
 settings = get_settings()
+

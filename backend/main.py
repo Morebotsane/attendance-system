@@ -9,9 +9,13 @@ from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 
 from app.core.config import settings
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from app.middleware.rate_limiter import limiter
 from app.db.session import engine
 from app.db.base import Base
 from app.api.endpoints import (
+    notifications,
     auth,
     attendance,
     employees,
@@ -51,6 +55,10 @@ app = FastAPI(
     docs_url="/api/docs" if settings.ENVIRONMENT != "production" else None,
     redoc_url="/api/redoc" if settings.ENVIRONMENT != "production" else None,
 )
+
+# Rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS middleware
 app.add_middleware(
@@ -103,3 +111,11 @@ if __name__ == "__main__":
         port=8000,
         reload=settings.ENVIRONMENT == "development"
     )
+
+# Notifications endpoints
+from app.api.endpoints import notifications
+app.include_router(
+    notifications.router,
+    prefix="/api/v1/notifications",
+    tags=["notifications"]
+)

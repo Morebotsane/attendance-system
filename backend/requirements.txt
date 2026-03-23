@@ -55,3 +55,9 @@ black==24.1.1
 flake8==7.0.0
 mypy==1.8.0
 pytest-cov==4.1.0
+
+# SMS Providers
+slowapi==0.1.9
+africastalking==2.0.2
+twilio==9.10.3
+slowapi==0.1.9
