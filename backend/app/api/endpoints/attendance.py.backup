@@ -21,8 +21,6 @@ from app.schemas.schemas import (
 from app.services.qr_service import qr_service
 from app.services.geofence_service import geofence_service
 from app.services.photo_service import photo_service
-from app.tasks.notifications import send_sms_task, send_email_task
-from app.templates.notifications import templates, format_phone_number
 
 router = APIRouter()
 
@@ -78,7 +76,6 @@ async def check_in(
     4. Process and store photo
     5. Create attendance record
     6. Log action in audit trail
-    7. Send SMS notification
     """
     
     # 1. Decode and validate QR code
@@ -206,34 +203,6 @@ async def check_in(
     await db.commit()
     await db.refresh(attendance_record)
     
-    # 7. Send SMS notification (async, non-blocking)
-    if employee.phone:
-        try:
-            phone = format_phone_number(employee.phone)
-            notification = templates.check_in_success(
-                employee_name=f"{employee.first_name} {employee.last_name}",
-                time=attendance_record.check_in_time.strftime("%H:%M")
-            )
-            send_sms_task.delay(phone, notification["sms"])
-        except Exception as e:
-            print(f"Failed to send check-in SMS: {e}")
-    
-    # 8. Send email notification (async, non-blocking)
-    if employee.email:
-        try:
-            notification = templates.check_in_success(
-                employee_name=f"{employee.first_name} {employee.last_name}",
-                time=attendance_record.check_in_time.strftime("%H:%M")
-            )
-            send_email_task.delay(
-                to_email=employee.email,
-                subject=notification["subject"],
-                body=notification["email"],
-                html_body=notification["html"]
-            )
-        except Exception as e:
-            print(f"Failed to send check-in email: {e}")
-    
     return attendance_record
 
 
@@ -314,49 +283,6 @@ async def check_out(
     
     await db.commit()
     await db.refresh(attendance_record)
-    
-    # Get employee for notification
-    emp_result = await db.execute(
-        select(Employee).where(Employee.id == uuid.UUID(employee_id))
-    )
-    employee = emp_result.scalar_one_or_none()
-    
-    # Calculate hours worked
-    if attendance_record.check_in_time and attendance_record.check_out_time:
-        time_diff = attendance_record.check_out_time - attendance_record.check_in_time
-        hours_worked = time_diff.total_seconds() / 3600
-    else:
-        hours_worked = 0
-    
-    # Send SMS notification (async, non-blocking)
-    if employee and employee.phone:
-        try:
-            phone = format_phone_number(employee.phone)
-            notification = templates.check_out_success(
-                employee_name=f"{employee.first_name} {employee.last_name}",
-                time=attendance_record.check_out_time.strftime("%H:%M"),
-                hours_worked=hours_worked
-            )
-            send_sms_task.delay(phone, notification["sms"])
-        except Exception as e:
-            print(f"Failed to send check-out SMS: {e}")
-    
-    # Send email notification (async, non-blocking)
-    if employee and employee.email:
-        try:
-            notification = templates.check_out_success(
-                employee_name=f"{employee.first_name} {employee.last_name}",
-                time=attendance_record.check_out_time.strftime("%H:%M"),
-                hours_worked=hours_worked
-            )
-            send_email_task.delay(
-                to_email=employee.email,
-                subject=notification["subject"],
-                body=notification["email"],
-                html_body=notification["html"]
-            )
-        except Exception as e:
-            print(f"Failed to send check-out email: {e}")
     
     return attendance_record
 

@@ -21,14 +21,15 @@ celery_app.conf.update(
     timezone="Africa/Maseru",
     enable_utc=True,
     task_track_started=True,
-    task_time_limit=30 * 60,  # 30 minutes max per task
-    task_soft_time_limit=25 * 60,  # Soft limit at 25 minutes
+    task_time_limit=30 * 60,
+    task_soft_time_limit=25 * 60,
     worker_prefetch_multiplier=4,
     worker_max_tasks_per_child=1000,
 )
 
-# Task routes
+# Task routes - FIXED: Use actual task names (without module path)
 celery_app.conf.task_routes = {
-    "app.tasks.notifications.send_sms_task": {"queue": "notifications"},
-    "app.tasks.notifications.send_email_task": {"queue": "notifications"},
+    "send_sms_task": {"queue": "notifications"},
+    "send_email_task": {"queue": "notifications"},
+    "send_bulk_sms_task": {"queue": "notifications"},
 }
