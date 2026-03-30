@@ -68,6 +68,22 @@ services:
       redis:
         condition: service_healthy
 
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: attendance_frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=/api/v1
+    depends_on:
+      - api
+
 volumes:
   postgres_data:
   redis_data:
