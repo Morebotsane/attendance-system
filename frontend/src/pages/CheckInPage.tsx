@@ -29,11 +29,15 @@ export function CheckInPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const webcamRef = useRef<Webcam>(null);
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+  const scannerInitialized = useRef(false);
   const geo = useGeolocation();
 
   // Init QR scanner when on scan step
   useEffect(() => {
     if (step !== 'scan') return;
+    if (scannerInitialized.current) return;
+    scannerInitialized.current = true; 
+
     const scanner = new Html5QrcodeScanner(
       'qr-reader',
       {
@@ -49,13 +53,17 @@ export function CheckInPage() {
       (text) => {
         setQrData(text);
         scanner.clear().catch(() => {});
+        scannerInitialized.current = false;
         setStep('camera');
         toast.success('QR code scanned!');
       },
       () => {}
     );
     scannerRef.current = scanner;
-    return () => { scanner.clear().catch(() => {}); };
+    return () => { 
+      scanner.clear().catch(() => {}); 
+      scannerInitialized.current = false;
+    };
   }, [step]);
 
   const capturePhoto = useCallback(() => {
