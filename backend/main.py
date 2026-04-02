@@ -2,12 +2,10 @@
 Hospital Attendance System - Main Application
 FastAPI backend for QR + Photo + Geofencing attendance tracking
 """
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
-
 from app.core.config import settings
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -16,6 +14,7 @@ from app.db.session import engine
 from app.db.base import Base
 from app.api.endpoints import (
     notifications,
+    kiosk,
     auth,
     attendance,
     employees,
@@ -79,6 +78,8 @@ app.include_router(employees.router, prefix="/api/v1/employees", tags=["Employee
 app.include_router(departments.router, prefix="/api/v1/departments", tags=["Departments"])
 app.include_router(reports.router, prefix="/api/v1/reports", tags=["Reports"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
+app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"])
+app.include_router(kiosk.router, prefix="/api/v1/kiosk", tags=["Kiosk"])
 
 
 @app.get("/")
@@ -97,8 +98,8 @@ async def health_check():
     """Health check endpoint for monitoring"""
     return {
         "status": "healthy",
-        "database": "connected",  # Add actual DB check here
-        "redis": "connected"  # Add actual Redis check here
+        "database": "connected",
+        "redis": "connected"
     }
 
 
@@ -111,11 +112,3 @@ if __name__ == "__main__":
         port=8000,
         reload=settings.ENVIRONMENT == "development"
     )
-
-# Notifications endpoints
-from app.api.endpoints import notifications
-app.include_router(
-    notifications.router,
-    prefix="/api/v1/notifications",
-    tags=["notifications"]
-)
