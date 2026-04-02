@@ -73,14 +73,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - VITE_KIOSK_PIN=${VITE_KIOSK_PIN}
     container_name: attendance_frontend
     ports:
       - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    environment:
-      - VITE_API_URL=/api/v1
+
     depends_on:
       - api
 

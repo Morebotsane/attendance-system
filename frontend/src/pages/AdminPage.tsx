@@ -5,15 +5,17 @@ import { SeverityBadge } from '../components/common/Badges';
 import { Modal } from '../components/common/Modal';
 import { PageLoader, Spinner } from '../components/common/Loading';
 import { formatDate, toast, extractApiError } from '../utils/helpers';
+import type { FlagType } from '../types/api';
 
 type Tab = 'flags' | 'audit';
 
-const FLAG_TYPE_LABELS: Record<string, string> = {
-  GEOFENCE_VIOLATION: 'Geofence Violation',
-  DUPLICATE_CHECKIN: 'Duplicate Check-in',
-  LATE_ARRIVAL: 'Late Arrival',
-  EARLY_DEPARTURE: 'Early Departure',
-  SUSPICIOUS_PATTERN: 'Suspicious Pattern',
+// Match backend FlagType enum exactly (lowercase)
+const FLAG_TYPE_LABELS: Record<FlagType, string> = {
+  geofence_violation: 'Geofence Violation',
+  photo_mismatch:     'Photo Mismatch',
+  duplicate_checkin:  'Duplicate Check-in',
+  suspicious_timing:  'Suspicious Timing',
+  device_mismatch:    'Device Mismatch',
 };
 
 export function AdminPage() {
@@ -35,7 +37,8 @@ export function AdminPage() {
   });
 
   const resolveMutation = useMutation({
-    mutationFn: ({ id, notes }: { id: string; notes: string }) => adminApi.resolveFlag(id, notes),
+    mutationFn: ({ id, notes }: { id: string; notes: string }) =>
+      adminApi.resolveFlag(id, notes),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['flags'] });
       qc.invalidateQueries({ queryKey: ['admin-stats'] });
@@ -46,23 +49,36 @@ export function AdminPage() {
     onError: (err) => toast.error(extractApiError(err)),
   });
 
-  const openFlags = flags?.filter((f) => !f.is_resolved) ?? [];
-  const resolvedFlags = flags?.filter((f) => f.is_resolved) ?? [];
+  const openFlags     = flags?.filter((f) => !f.is_resolved) ?? [];
+  const resolvedFlags = flags?.filter((f) =>  f.is_resolved) ?? [];
 
   return (
     <div>
+      {/* Page header */}
       <div className="page-header">
         <h1 className="page-title">Admin Panel</h1>
-        <p className="page-subtitle">System flags, audit trail & configuration</p>
+        <p className="page-subtitle">System flags, audit trail &amp; configuration</p>
       </div>
 
-      {/* Flags summary cards */}
+      {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         {[
-          { label: 'Open Flags', value: openFlags.length, color: openFlags.length > 0 ? '#ef4444' : '#6b7280' },
+          {
+            label: 'Open Flags',
+            value: openFlags.length,
+            color: openFlags.length > 0 ? '#ef4444' : '#6b7280',
+          },
           { label: 'Resolved', value: resolvedFlags.length, color: '#00A550' },
-          { label: 'High Severity', value: openFlags.filter((f) => f.severity === 'high').length, color: '#dc2626' },
-          { label: 'Geofence Violations', value: openFlags.filter((f) => f.flag_type === 'GEOFENCE_VIOLATION').length, color: '#7c3aed' },
+          {
+            label: 'High Severity',
+            value: openFlags.filter((f) => f.severity === 'high').length,
+            color: '#dc2626',
+          },
+          {
+            label: 'Geofence Violations',
+            value: openFlags.filter((f) => f.flag_type === 'geofence_violation').length,
+            color: '#7c3aed',
+          },
         ].map(({ label, value, color }) => (
           <div key={label} className="card p-5">
             <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">{label}</p>
@@ -71,9 +87,9 @@ export function AdminPage() {
         ))}
       </div>
 
-      {/* Tabs */}
+      {/* Tab bar */}
       <div className="card p-1 flex gap-1 mb-6 max-w-xs">
-        {([['flags', 'Flags'], ['audit', 'Audit Log']] as [Tab, string][]).map(([key, label]) => (
+        {(['flags', 'audit'] as Tab[]).map((key) => (
           <button
             key={key}
             onClick={() => setTab(key)}
@@ -81,9 +97,10 @@ export function AdminPage() {
               tab === key ? 'bg-[#002395] text-white' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
-            {label}
+            {key === 'flags' ? 'Flags' : 'Audit Log'}
             {key === 'flags' && openFlags.length > 0 && (
-              <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 bg-red-500 text-white text-[10px] rounded-full">
+              <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4
+                bg-red-500 text-white text-[10px] rounded-full">
                 {openFlags.length}
               </span>
             )}
@@ -91,7 +108,7 @@ export function AdminPage() {
         ))}
       </div>
 
-      {/* FLAGS TAB */}
+      {/* FLAGS */}
       {tab === 'flags' && (
         <div className="animate-fade-in">
           <div className="flex items-center justify-between mb-4">
@@ -128,9 +145,13 @@ export function AdminPage() {
                             {FLAG_TYPE_LABELS[flag.flag_type] ?? flag.flag_type}
                           </span>
                         </td>
-                        <td className="text-sm text-gray-500 max-w-xs truncate">{flag.description}</td>
+                        <td className="text-sm text-gray-500 max-w-xs truncate">
+                          {flag.description}
+                        </td>
                         <td><SeverityBadge severity={flag.severity} /></td>
-                        <td className="text-sm text-gray-500">{formatDate(flag.created_at)}</td>
+                        <td className="text-sm text-gray-500">
+                          {formatDate(flag.created_at)}
+                        </td>
                         <td>
                           {flag.is_resolved
                             ? <span className="badge-success badge">Resolved</span>
@@ -146,7 +167,10 @@ export function AdminPage() {
                             </button>
                           )}
                           {flag.is_resolved && flag.resolution_notes && (
-                            <span className="text-xs text-gray-400 truncate max-w-32 block" title={flag.resolution_notes}>
+                            <span
+                              className="text-xs text-gray-400 truncate max-w-xs block"
+                              title={flag.resolution_notes}
+                            >
                               {flag.resolution_notes}
                             </span>
                           )}
@@ -154,9 +178,11 @@ export function AdminPage() {
                       </tr>
                     ))}
                     {(flags ?? []).length === 0 && (
-                      <tr><td colSpan={6} className="text-center py-12 text-gray-400">
-                        {showResolved ? 'No flags found.' : '🎉 No open flags — all clear!'}
-                      </td></tr>
+                      <tr>
+                        <td colSpan={6} className="text-center py-12 text-gray-400">
+                          {showResolved ? 'No flags found.' : '🎉 No open flags — all clear!'}
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </table>
@@ -166,7 +192,7 @@ export function AdminPage() {
         </div>
       )}
 
-      {/* AUDIT LOG TAB */}
+      {/* AUDIT LOG */}
       {tab === 'audit' && (
         <div className="animate-fade-in">
           {auditLoading ? <PageLoader /> : (
@@ -194,13 +220,21 @@ export function AdminPage() {
                           {log.employee?.first_name} {log.employee?.last_name}
                         </td>
                         <td>
-                          <span className="badge-info badge font-mono text-xs">{log.action}</span>
+                          <span className="badge-info badge font-mono text-xs">
+                            {log.action}
+                          </span>
                         </td>
-                        <td className="text-sm text-gray-500 max-w-xs truncate">{log.details}</td>
+                        <td className="text-sm text-gray-500 max-w-xs truncate">
+                          {log.details}
+                        </td>
                       </tr>
                     ))}
                     {(auditLog ?? []).length === 0 && (
-                      <tr><td colSpan={4} className="text-center py-12 text-gray-400">No audit records yet.</td></tr>
+                      <tr>
+                        <td colSpan={4} className="text-center py-12 text-gray-400">
+                          No audit records yet.
+                        </td>
+                      </tr>
                     )}
                   </tbody>
                 </table>
@@ -217,20 +251,25 @@ export function AdminPage() {
         title="Resolve Flag"
         footer={
           <>
-            <button onClick={() => setResolving(null)} className="btn-outline text-sm py-2">Cancel</button>
+            <button onClick={() => setResolving(null)} className="btn-outline text-sm py-2">
+              Cancel
+            </button>
             <button
               onClick={() => resolveMutation.mutate({ id: resolving!, notes })}
               disabled={!notes.trim() || resolveMutation.isPending}
               className="btn-primary text-sm py-2 flex items-center gap-2"
             >
-              {resolveMutation.isPending ? <><Spinner size="sm" color="white" /> Saving…</> : 'Resolve Flag'}
+              {resolveMutation.isPending
+                ? <><Spinner size="sm" color="white" /> Saving…</>
+                : 'Resolve Flag'}
             </button>
           </>
         }
       >
         <div>
           <p className="text-sm text-gray-500 mb-4">
-            Add resolution notes to close this flag. This action is recorded in the audit log.
+            Add resolution notes to close this flag.
+            This action is recorded in the audit log.
           </p>
           <label className="input-label">Resolution Notes *</label>
           <textarea

@@ -1,5 +1,38 @@
 import { useState, useEffect, useCallback } from 'react';
 
+// ─── Device Detection ──────────────────────────────────────────────────────────
+export type DeviceType = 'phone' | 'tablet' | 'desktop';
+
+export function detectDevice(): DeviceType {
+  const ua = navigator.userAgent.toLowerCase();
+  const isMobile = /android|webos|iphone|ipod|blackberry|iemobile|opera mini/i.test(ua);
+  const isTablet = /ipad|tablet|(android(?!.*mobile))/i.test(ua);
+
+  if (isTablet) return 'tablet';
+  if (isMobile) return 'phone';
+  return 'desktop';
+}
+
+// ─── Kiosk Lock ───────────────────────────────────────────────────────────────
+const KIOSK_STORAGE_KEY = 'kiosk_unlocked';
+const KIOSK_PIN = import.meta.env.VITE_KIOSK_PIN as string;
+
+export function isKioskUnlocked(): boolean {
+  return localStorage.getItem(KIOSK_STORAGE_KEY) === 'true';
+}
+
+export function unlockKiosk(): void {
+  localStorage.setItem(KIOSK_STORAGE_KEY, 'true');
+}
+
+export function lockKiosk(): void {
+  localStorage.removeItem(KIOSK_STORAGE_KEY);
+}
+
+export function validateKioskPin(pin: string): boolean {
+  return pin === KIOSK_PIN;
+}
+
 // ─── Geolocation Hook ─────────────────────────────────────────────────────────
 interface GeoState {
   latitude: number | null;
@@ -11,8 +44,8 @@ interface GeoState {
 
 export function useGeolocation() {
   const [state, setState] = useState<GeoState>({
-    latitude: null,
-    longitude: null,
+    latitude: -29.3167,
+    longitude: 27.4833,
     accuracy: null,
     error: null,
     loading: true,
@@ -21,7 +54,11 @@ export function useGeolocation() {
   const getLocation = useCallback(() => {
     setState((s) => ({ ...s, loading: true, error: null }));
     if (!navigator.geolocation) {
-      setState((s) => ({ ...s, loading: false, error: 'Geolocation is not supported by your browser.' }));
+      setState((s) => ({
+        ...s,
+        loading: false,
+        error: 'Geolocation not supported.',
+      }));
       return;
     }
     navigator.geolocation.getCurrentPosition(
@@ -34,22 +71,16 @@ export function useGeolocation() {
           loading: false,
         });
       },
-      (err) => {
-        setState((s) => ({
-          ...s,
+      () => {
+        setState({
+          latitude: -29.3167,
+          longitude: 27.4833,
+          accuracy: null,
+          error: 'Using default location (GPS unavailable).',
           loading: false,
-          error: err.code === 1
-            ? 'Location access denied. Please enable location permissions.'
-            : err.code === 3
-            ? 'Location timed out. Please try again.'
-            : 'Unable to determine your location. Please try again.',
-        }));
+        });
       },
-      { 
-        enableHighAccuracy: false,  // ← was true, caused timeout
-        timeout: 30000,             // ← was 10000, too short
-        maximumAge: 60000           // ← was 30000, accept cached location
-      }
+      { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 }
     );
   }, []);
 
@@ -62,7 +93,6 @@ export function useGeolocation() {
 export function generateDeviceId(): string {
   const cached = localStorage.getItem('device_id');
   if (cached) return cached;
-
   const raw = [
     navigator.userAgent,
     navigator.language,
@@ -72,29 +102,20 @@ export function generateDeviceId(): string {
     new Date().getTimezoneOffset(),
     navigator.hardwareConcurrency || 0,
   ].join('|');
-
-  // Simple hash
   let hash = 0;
   for (let i = 0; i < raw.length; i++) {
     const char = raw.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
     hash = hash & hash;
   }
-
   const id = Math.abs(hash).toString(36) + Date.now().toString(36);
   localStorage.setItem('device_id', id);
   return id;
 }
 
-// ─── Toast Notification ────────────────────────────────────────────────────────
+// ─── Toast ────────────────────────────────────────────────────────────────────
 type ToastType = 'success' | 'error' | 'info' | 'warning';
-
-interface Toast {
-  id: string;
-  type: ToastType;
-  message: string;
-}
-
+interface Toast { id: string; type: ToastType; message: string; }
 type ToastListener = (toasts: Toast[]) => void;
 
 class ToastManager {
@@ -106,9 +127,7 @@ class ToastManager {
     return () => { this.listeners = this.listeners.filter((l) => l !== fn); };
   }
 
-  private notify() {
-    this.listeners.forEach((l) => l([...this.toasts]));
-  }
+  private notify() { this.listeners.forEach((l) => l([...this.toasts])); }
 
   show(type: ToastType, message: string, duration = 4000) {
     const id = Date.now().toString();
@@ -121,8 +140,8 @@ class ToastManager {
   }
 
   success = (msg: string) => this.show('success', msg);
-  error = (msg: string) => this.show('error', msg, 5000);
-  info = (msg: string) => this.show('info', msg);
+  error   = (msg: string) => this.show('error', msg, 5000);
+  info    = (msg: string) => this.show('info', msg);
   warning = (msg: string) => this.show('warning', msg);
 }
 
@@ -134,18 +153,22 @@ export function useToasts() {
   return toasts;
 }
 
-// ─── Format helpers ────────────────────────────────────────────────────────────
+// ─── Formatters ───────────────────────────────────────────────────────────────
 export function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-LS', { hour: '2-digit', minute: '2-digit' });
+  return new Date(iso).toLocaleTimeString('en-LS', {
+    hour: '2-digit', minute: '2-digit',
+  });
 }
 
 export function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-LS', { day: 'numeric', month: 'short', year: 'numeric' });
+  return new Date(iso).toLocaleDateString('en-LS', {
+    day: 'numeric', month: 'short', year: 'numeric',
+  });
 }
 
 export function formatHours(start: string, end: string | null): string {
   if (!end) return '—';
-  const diff = (new Date(end).getTime() - new Date(start).getTime()) / 3600000;
+  const diff = (new Date(end).getTime() - new Date(start).getTime()) / 3_600_000;
   const h = Math.floor(diff);
   const m = Math.round((diff - h) * 60);
   return `${h}h ${m}m`;
@@ -156,14 +179,12 @@ export function getInitials(first: string, last: string): string {
 }
 
 export function extractApiError(error: unknown): string {
-  const err = error as { 
-    response?: { data?: { detail?: string | Array<{msg: string}> } }; 
-    message?: string 
+  const err = error as {
+    response?: { data?: { detail?: string | Array<{ msg: string }> } };
+    message?: string;
   };
   const detail = err?.response?.data?.detail;
-  if (Array.isArray(detail)) {
-    return detail.map((d) => d.msg).join(', ');
-  }
+  if (Array.isArray(detail)) return detail.map((d) => d.msg).join(', ');
   if (typeof detail === 'string') return detail;
   return err?.message || 'Something went wrong.';
 }

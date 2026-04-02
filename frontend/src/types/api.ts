@@ -1,25 +1,46 @@
+// ─── Enums — match backend exactly (lowercase) ────────────────────────────────
 export type Role = 'admin' | 'manager' | 'employee';
-export type AttendanceStatus = 'ACTIVE' | 'COMPLETED' | 'FLAGGED';
-export type FlagType = 'GEOFENCE_VIOLATION' | 'DUPLICATE_CHECKIN' | 'LATE_ARRIVAL' | 'EARLY_DEPARTURE' | 'SUSPICIOUS_PATTERN';
+export type AttendanceStatus = 'active' | 'completed' | 'flagged';
+export type FlagType =
+  | 'geofence_violation'
+  | 'photo_mismatch'
+  | 'duplicate_checkin'
+  | 'suspicious_timing'
+  | 'device_mismatch';
 export type Severity = 'low' | 'medium' | 'high';
 
+// ─── Auth ──────────────────────────────────────────────────────────────────────
 export interface User {
   id: string;
-  username: string;
-  email: string;
-  role: Role;
   employee_number: string;
   first_name: string;
   last_name: string;
+  email: string;
+  phone: string;
+  position: string;
+  is_active: boolean;
+  is_admin: boolean;   // what backend actually sends
+  role: Role;          // derived on the frontend from is_admin
+  qr_code_data: string;
+  qr_code_image_url?: string;
+  department_id: string | null;
+  created_at: string;
 }
 
 export interface LoginResponse {
   access_token: string;
   refresh_token: string;
   token_type: string;
-  employee: User;
+  employee: User;      // backend sends "employee", not "user"
 }
 
+export interface Token {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+}
+
+// ─── Departments ───────────────────────────────────────────────────────────────
 export interface Department {
   id: string;
   name: string;
@@ -41,6 +62,7 @@ export interface DepartmentStats {
   average_hours: number;
 }
 
+// ─── Employees ─────────────────────────────────────────────────────────────────
 export interface Employee {
   id: string;
   employee_number: string;
@@ -51,7 +73,9 @@ export interface Employee {
   position: string;
   department_id: string | null;
   qr_code_data: string;
+  qr_code_image_url?: string;
   is_active: boolean;
+  is_admin: boolean;
   role: Role;
   created_at: string;
   updated_at: string;
@@ -59,6 +83,19 @@ export interface Employee {
   attendance_records?: AttendanceRecord[];
 }
 
+export interface CreateEmployeePayload {
+  employee_number: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+  position: string;
+  department_id: string;
+  role: Role;
+  password: string;
+}
+
+// ─── Attendance ────────────────────────────────────────────────────────────────
 export interface AttendanceRecord {
   id: string;
   employee_id: string;
@@ -83,6 +120,7 @@ export interface AttendanceRecord {
   flags?: AttendanceFlag[];
 }
 
+// ─── Flags ─────────────────────────────────────────────────────────────────────
 export interface AttendanceFlag {
   id: string;
   attendance_record_id: string | null;
@@ -96,6 +134,17 @@ export interface AttendanceFlag {
   created_at: string;
 }
 
+// ─── Audit Log ─────────────────────────────────────────────────────────────────
+export interface AuditLog {
+  id: string;
+  employee_id: string;
+  action: string;
+  details: string;
+  created_at: string;
+  employee?: Employee;
+}
+
+// ─── System Stats ──────────────────────────────────────────────────────────────
 export interface SystemStats {
   total_employees: number;
   active_employees: number;
@@ -105,6 +154,7 @@ export interface SystemStats {
   open_flags: number;
 }
 
+// ─── Reports ───────────────────────────────────────────────────────────────────
 export interface DailyReport {
   date: string;
   total_employees: number;
@@ -112,7 +162,11 @@ export interface DailyReport {
   checked_out: number;
   still_active: number;
   attendance_rate: number;
-  by_department: Array<{ department_name: string; checked_in: number; total: number }>;
+  by_department: Array<{
+    department_name: string;
+    checked_in: number;
+    total: number;
+  }>;
 }
 
 export interface MonthlyReport {
@@ -121,7 +175,11 @@ export interface MonthlyReport {
   total_days: number;
   average_attendance_rate: number;
   total_hours_worked: number;
-  by_day: Array<{ date: string; checked_in: number; total_employees: number }>;
+  by_day: Array<{
+    date: string;
+    checked_in: number;
+    total_employees: number;
+  }>;
 }
 
 export interface EmployeeReport {
@@ -135,27 +193,14 @@ export interface EmployeeReport {
   records: AttendanceRecord[];
 }
 
+// ─── Kiosk ─────────────────────────────────────────────────────────────────────
+export interface KioskQRData {
+  checkin_qr: string;
+  checkout_qr: string;
+  expires_at: string;
+  date: string;
+}
+
 export interface ApiError {
   detail: string;
-}
-
-export interface CreateEmployeePayload {
-  employee_number: string;
-  first_name: string;
-  last_name: string;
-  email: string;
-  phone: string;
-  position: string;
-  department_id: string;
-  role: Role;
-  password: string;
-}
-
-export interface AuditLog {
-  id: string;
-  employee_id: string;
-  action: string;
-  details: string;
-  created_at: string;
-  employee?: Employee;
 }
