@@ -13,6 +13,7 @@ from app.middleware.rate_limiter import limiter
 from app.db.session import engine
 from app.db.base import Base
 from app.api.endpoints import (
+    queue,
     notifications,
     kiosk,
     auth,
@@ -80,6 +81,7 @@ app.include_router(reports.router, prefix="/api/v1/reports", tags=["Reports"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"])
 app.include_router(kiosk.router, prefix="/api/v1/kiosk", tags=["Kiosk"])
+app.include_router(queue.router, prefix="/api/v1/kiosk", tags=["Queue"])
 
 
 @app.get("/")

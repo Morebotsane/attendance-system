@@ -194,11 +194,29 @@ export interface EmployeeReport {
 }
 
 // ─── Kiosk ─────────────────────────────────────────────────────────────────────
+export interface KioskDepartment {
+  id: string;
+  name: string;
+  code: string;
+  location: string;
+  latitude: number;
+  longitude: number;
+  geofence_radius: number;
+}
+
 export interface KioskQRData {
-  checkin_qr: string;
-  checkout_qr: string;
-  expires_at: string;
-  date: string;
+  checkin_qr: string;           // encrypted daily token — NOT a URL
+  checkout_qr: string;          // encrypted daily token — NOT a URL
+  expires_at: string;           // midnight tonight ISO string
+  date: string;                 // today YYYY-MM-DD
+  department_id: string | null;
+  location_name: string | null;
+  department: KioskDepartment | null;
+}
+
+export interface KioskLocationsResponse {
+  locations: KioskDepartment[];
+  total: number;
 }
 
 export interface ApiError {

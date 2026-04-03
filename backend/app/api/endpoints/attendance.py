@@ -16,6 +16,7 @@ from app.models.models import (
     Employee, AttendanceRecord, AttendanceAuditLog, 
     AttendanceStatus, FlagType, AttendanceFlag
 )
+from app.models.kiosk_session import KioskSession, SessionStatus
 from app.schemas.schemas import (
     AttendanceRecordResponse,
     CheckInRequest, CheckOutRequest
@@ -23,6 +24,7 @@ from app.schemas.schemas import (
 from app.services.qr_service import qr_service
 from app.services.geofence_service import geofence_service
 from app.services.photo_service import photo_service
+from app.services.queue_service import queue_service
 from app.tasks.notifications import send_sms_task, send_email_task
 from app.templates.notifications import templates, format_phone_number
 from app.api.endpoints.auth import decode_token
@@ -63,6 +65,27 @@ async def create_flag(
     return flag
 
 
+def _decrypt_session_qr(qr_data: str) -> dict:
+    """Decrypt session QR to get session_id"""
+    import base64
+    import hashlib
+    from cryptography.fernet import Fernet
+    from app.core.config import settings
+    
+    try:
+        encrypted = base64.urlsafe_b64decode(qr_data.encode())
+        
+        # Generate Fernet key from SECRET_KEY (same as queue_service)
+        key_bytes = hashlib.sha256(settings.SECRET_KEY.encode()).digest()
+        fernet_key = base64.urlsafe_b64encode(key_bytes)
+        fernet = Fernet(fernet_key)
+        
+        decrypted = fernet.decrypt(encrypted)
+        return json.loads(decrypted.decode())
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @router.post("/check-in", response_model=AttendanceRecordResponse, status_code=status.HTTP_201_CREATED)
 async def check_in(
     qr_code_data: str = Form(...),
@@ -74,11 +97,12 @@ async def check_in(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Process employee check-in with QR code, geolocation, and photo
+    Process employee check-in
     
-    Supports TWO QR flows:
-    1. Kiosk token (daily rotating, requires JWT auth)
-    2. Employee badge QR (encrypted employee_id, no auth required)
+    NOW SUPPORTS 3 QR FLOWS:
+    1. SESSION QR (new) - scanned from kiosk after joining queue (requires JWT)
+    2. KIOSK TOKEN (old) - daily rotating token (requires JWT)
+    3. EMPLOYEE BADGE QR (legacy) - employee's personal badge (no JWT required)
     
     Steps:
     1. Validate QR code and get employee
@@ -88,17 +112,24 @@ async def check_in(
     5. Create attendance record
     6. Log action in audit trail
     7. Send SMS + Email notifications
+    8. Complete session (if session-based)
     """
     
-    # 1. Validate QR code (try kiosk token first, then employee badge)
-    kiosk_validation = qr_service.validate_kiosk_token(qr_code_data, "checkin")
+    employee_id = None
+    qr_validation_type = None
+    session_id = None
     
-    if kiosk_validation["valid"]:
-        # Valid kiosk token - requires JWT authentication
+    # PRIORITY 1: Try session QR validation (NEW FLOW)
+    session_data = _decrypt_session_qr(qr_code_data)
+    if "session_id" in session_data and not session_data.get("error"):
+        # This is a session QR!
+        session_id = session_data["session_id"]
+        
+        # MUST have JWT for session-based check-in
         if not credentials:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Kiosk check-in requires authentication. Please log in to the app."
+                detail="Session-based check-in requires authentication. Please log in."
             )
         
         # Decode JWT to get employee_id
@@ -107,34 +138,89 @@ async def check_in(
             payload = decode_token(token)
             employee_id = payload.get("sub")
             if not employee_id:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid authentication token"
-                )
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"Authentication failed: {str(e)}"
             )
         
-        qr_result = {
-            "valid": True,
-            "employee_id": employee_id,
-            "type": "kiosk_token",
-            "date": kiosk_validation["date"]
-        }
-    else:
-        # Not a valid kiosk token - try employee badge QR (backward compatibility)
-        qr_result = qr_service.decode_qr_data(qr_code_data)
+        # Validate session exists and belongs to this employee
+        session_result = await db.execute(
+            select(KioskSession).where(KioskSession.id == uuid.UUID(session_id))
+        )
+        session = session_result.scalar_one_or_none()
         
-        if not qr_result.get("valid"):
+        if not session:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid QR code. Please scan a valid employee badge or kiosk QR."
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found"
             )
         
-        employee_id = qr_result["employee_id"]
-        qr_result["type"] = "employee_badge"
+        # Validate session belongs to this employee
+        if str(session.employee_id) != employee_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Session does not belong to you"
+            )
+        
+        # Validate session is ACTIVE (their turn)
+        if session.status != SessionStatus.ACTIVE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Session is {session.status.value}. Wait for your turn."
+            )
+        
+        # Validate session not expired
+        if session.expires_at < datetime.utcnow():
+            session.status = SessionStatus.EXPIRED
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Session expired. Please join queue again."
+            )
+        
+        qr_validation_type = "session_qr"
+        
+    else:
+        # PRIORITY 2: Try kiosk token validation (OLD FLOW)
+        kiosk_validation = qr_service.validate_kiosk_token(qr_code_data, "checkin")
+        
+        if kiosk_validation["valid"]:
+            # Valid kiosk token - requires JWT
+            if not credentials:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Kiosk check-in requires authentication. Please log in to the app."
+                )
+            
+            # Decode JWT to get employee_id
+            try:
+                token = credentials.credentials
+                payload = decode_token(token)
+                employee_id = payload.get("sub")
+                if not employee_id:
+                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Authentication failed: {str(e)}"
+                )
+            
+            qr_validation_type = "kiosk_token"
+            
+        else:
+            # PRIORITY 3: Try employee badge QR (LEGACY FLOW - backward compatible)
+            badge_qr = qr_service.decode_qr_data(qr_code_data)
+            
+            if not badge_qr.get("valid"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid QR code. Please scan a valid session QR, kiosk QR, or employee badge."
+                )
+            
+            employee_id = badge_qr["employee_id"]
+            qr_validation_type = "employee_badge"
     
     # Get employee
     result = await db.execute(
@@ -163,7 +249,6 @@ async def check_in(
         )
         
         if not geo_validation["valid"]:
-            # Create flag for geofence violation
             await create_flag(
                 db=db,
                 attendance_id=None,
@@ -216,7 +301,10 @@ async def check_in(
     # 5. Create attendance record
     validation_metadata = serialize_for_json({
         "geofence": geo_validation,
-        "qr_validation": qr_result
+        "qr_validation": {
+            "type": qr_validation_type,
+            "session_id": session_id
+        }
     })
     
     attendance_record = AttendanceRecord(
@@ -249,7 +337,11 @@ async def check_in(
     await db.commit()
     await db.refresh(attendance_record)
     
-    # 7. Send SMS notification (async, non-blocking)
+    # 7. Complete session if session-based
+    if session_id:
+        await queue_service.complete_session(db, session_id, employee_id)
+    
+    # 8. Send SMS notification (async, non-blocking)
     if employee.phone:
         try:
             phone = format_phone_number(employee.phone)
@@ -261,7 +353,7 @@ async def check_in(
         except Exception as e:
             print(f"Failed to send check-in SMS: {e}")
     
-    # 8. Send email notification (async, non-blocking)
+    # 9. Send email notification (async, non-blocking)
     if employee.email:
         try:
             notification = templates.check_in_success(
@@ -293,56 +385,74 @@ async def check_out(
     """
     Process employee check-out
     
-    Supports TWO QR flows:
-    1. Kiosk token (daily rotating, requires JWT auth)
-    2. Employee badge QR (encrypted employee_id, no auth required)
+    SUPPORTS 3 QR FLOWS (same as check-in):
+    1. SESSION QR - scanned from kiosk after joining queue
+    2. KIOSK TOKEN - daily rotating token
+    3. EMPLOYEE BADGE QR - employee's personal badge
     """
     
-    # 1. Validate QR code (try kiosk token first, then employee badge)
-    kiosk_validation = qr_service.validate_kiosk_token(qr_code_data, "checkout")
+    employee_id = None
+    qr_validation_type = None
+    session_id = None
     
-    if kiosk_validation["valid"]:
-        # Valid kiosk token - requires JWT authentication
+    # PRIORITY 1: Try session QR validation
+    session_data = _decrypt_session_qr(qr_code_data)
+    if "session_id" in session_data and not session_data.get("error"):
+        session_id = session_data["session_id"]
+        
         if not credentials:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Kiosk check-out requires authentication. Please log in to the app."
+                detail="Session-based check-out requires authentication."
             )
         
-        # Decode JWT to get employee_id
         try:
             token = credentials.credentials
             payload = decode_token(token)
             employee_id = payload.get("sub")
-            if not employee_id:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid authentication token"
-                )
         except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Authentication failed: {str(e)}"
-            )
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
         
-        qr_result = {
-            "valid": True,
-            "employee_id": employee_id,
-            "type": "kiosk_token",
-            "date": kiosk_validation["date"]
-        }
+        # Validate session
+        session_result = await db.execute(
+            select(KioskSession).where(KioskSession.id == uuid.UUID(session_id))
+        )
+        session = session_result.scalar_one_or_none()
+        
+        if not session or str(session.employee_id) != employee_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid session")
+        
+        if session.status != SessionStatus.ACTIVE:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Wait for your turn")
+        
+        qr_validation_type = "session_qr"
+        
     else:
-        # Not a valid kiosk token - try employee badge QR (backward compatibility)
-        qr_result = qr_service.decode_qr_data(qr_code_data)
+        # PRIORITY 2: Try kiosk token
+        kiosk_validation = qr_service.validate_kiosk_token(qr_code_data, "checkout")
         
-        if not qr_result.get("valid"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid QR code. Please scan a valid employee badge or kiosk QR."
-            )
-        
-        employee_id = qr_result["employee_id"]
-        qr_result["type"] = "employee_badge"
+        if kiosk_validation["valid"]:
+            if not credentials:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+            
+            try:
+                token = credentials.credentials
+                payload = decode_token(token)
+                employee_id = payload.get("sub")
+            except Exception as e:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+            
+            qr_validation_type = "kiosk_token"
+            
+        else:
+            # PRIORITY 3: Try employee badge QR
+            badge_qr = qr_service.decode_qr_data(qr_code_data)
+            
+            if not badge_qr.get("valid"):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid QR code")
+            
+            employee_id = badge_qr["employee_id"]
+            qr_validation_type = "employee_badge"
     
     # Find active attendance record
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -400,6 +510,10 @@ async def check_out(
     await db.commit()
     await db.refresh(attendance_record)
     
+    # Complete session if session-based
+    if session_id:
+        await queue_service.complete_session(db, session_id, employee_id)
+    
     # Get employee for notification
     emp_result = await db.execute(
         select(Employee).where(Employee.id == uuid.UUID(employee_id))
@@ -413,7 +527,7 @@ async def check_out(
     else:
         hours_worked = 0
     
-    # Send SMS notification (async, non-blocking)
+    # Send notifications
     if employee and employee.phone:
         try:
             phone = format_phone_number(employee.phone)
@@ -426,7 +540,6 @@ async def check_out(
         except Exception as e:
             print(f"Failed to send check-out SMS: {e}")
     
-    # Send email notification (async, non-blocking)
     if employee and employee.email:
         try:
             notification = templates.check_out_success(

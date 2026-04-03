@@ -11,6 +11,7 @@ import uuid
 import enum
 
 from app.db.base import BaseModel, Base
+from app.models.kiosk_session import KioskSession, SessionStatus, SessionType
 
 
 class ShiftType(str, enum.Enum):
@@ -71,6 +72,7 @@ class Employee(BaseModel):
     department = relationship("Department", back_populates="employees")
     attendance_records = relationship("AttendanceRecord", back_populates="employee")
 
+    kiosk_sessions = relationship("KioskSession", back_populates="employee")
 
 class AttendanceRecord(BaseModel):
     __tablename__ = "attendance_records"
