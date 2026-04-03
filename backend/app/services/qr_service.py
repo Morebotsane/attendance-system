@@ -167,5 +167,86 @@ class QRCodeService:
         return f"/static/qr_codes/{filename}"
 
 
+
+    def generate_kiosk_token(self, token_type: str, date_str: str = None) -> str:
+        """
+        Generate encrypted daily kiosk token
+        
+        Args:
+            token_type: "checkin" or "checkout"
+            date_str: Date string (YYYY-MM-DD) or None for today
+            
+        Returns:
+            Encrypted token string
+        """
+        if date_str is None:
+            date_str = date.today().isoformat()
+        
+        # Create token data
+        token_data = {
+            "type": token_type,
+            "date": date_str,
+            "nonce": secrets.token_hex(16)  # Random nonce to prevent pre-generation
+        }
+        
+        # Encrypt
+        json_data = json.dumps(token_data)
+        encrypted = self.fernet.encrypt(json_data.encode())
+        return base64.urlsafe_b64encode(encrypted).decode()
+    
+    def validate_kiosk_token(self, qr_data: str, expected_type: str) -> dict:
+        """
+        Validate kiosk token
+        
+        Args:
+            qr_data: Encrypted token string
+            expected_type: "checkin" or "checkout"
+            
+        Returns:
+            {
+                "valid": bool,
+                "date": str or None,
+                "type": str or None,
+                "error": str or None
+            }
+        """
+        try:
+            # Decode and decrypt
+            encrypted = base64.urlsafe_b64decode(qr_data.encode())
+            decrypted = self.fernet.decrypt(encrypted)
+            token_data = json.loads(decrypted.decode())
+            
+            # Validate structure
+            if not all(k in token_data for k in ["type", "date", "nonce"]):
+                return {"valid": False, "error": "Invalid token structure"}
+            
+            # Validate type matches
+            if token_data["type"] != expected_type:
+                return {
+                    "valid": False, 
+                    "error": f"Token is for {token_data['type']}, not {expected_type}"
+                }
+            
+            # Validate date is today
+            token_date = token_data["date"]
+            today = date.today().isoformat()
+            
+            if token_date != today:
+                return {
+                    "valid": False,
+                    "error": f"Token expired (for {token_date}, today is {today})"
+                }
+            
+            return {
+                "valid": True,
+                "date": token_date,
+                "type": token_data["type"],
+                "error": None
+            }
+            
+        except Exception as e:
+            return {"valid": False, "error": f"Decryption failed: {str(e)}"}
+
+
 # Create singleton instance
 qr_service = QRCodeService()

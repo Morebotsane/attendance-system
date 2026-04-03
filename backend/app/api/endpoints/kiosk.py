@@ -2,11 +2,13 @@
 Kiosk-specific endpoints for generating location-based QR codes
 """
 from typing import Optional
+from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.db.session import get_db
 from app.models.models import Department
+from app.services.qr_service import qr_service
 
 router = APIRouter(prefix="/kiosk", tags=["kiosk"])
 
@@ -17,25 +19,28 @@ async def get_kiosk_qr(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Generate QR codes for kiosk display - BOTH check-in and check-out
+    Generate encrypted daily kiosk tokens - NOT URLs!
     
-    Returns TWO QR codes:
-    - checkin_qr: URL for check-in flow
-    - checkout_qr: URL for check-out flow
+    Returns TWO encrypted tokens:
+    - checkin_qr: Encrypted token for check-in (valid today only)
+    - checkout_qr: Encrypted token for check-out (valid today only)
+    
+    Tokens rotate daily and contain:
+    - type: "checkin" or "checkout"
+    - date: today's date
+    - nonce: random value to prevent pre-generation
     
     Args:
         department_id: Optional UUID of department where kiosk is located
         
     Returns:
-        checkin_qr: URL to check-in page
-        checkout_qr: URL to check-out page
+        checkin_qr: Encrypted daily token for check-in
+        checkout_qr: Encrypted daily token for check-out
+        expires_at: Midnight tonight (tokens expire)
+        date: Today's date
         department: Department info if department_id provided
         location_name: Human-readable location name
     """
-    
-    # Base URLs (frontend URLs)
-    base_checkin = "https://5173-firebase-attendance-system-1773135120418.cluster-vpxjqdstfzgs6qeiaf7rdlsqrc.cloudworkstations.dev/check-in"
-    base_checkout = "https://5173-firebase-attendance-system-1773135120418.cluster-vpxjqdstfzgs6qeiaf7rdlsqrc.cloudworkstations.dev/check-out"
     
     department = None
     location_name = "General"
@@ -54,18 +59,20 @@ async def get_kiosk_qr(
             )
         
         location_name = department.name
-        
-        # Build URLs with department parameter
-        checkin_url = f"{base_checkin}?dept={department_id}"
-        checkout_url = f"{base_checkout}?dept={department_id}"
-    else:
-        # General kiosk (no specific department)
-        checkin_url = base_checkin
-        checkout_url = base_checkout
+    
+    # Generate encrypted tokens for today
+    today_str = date.today().isoformat()
+    checkin_token = qr_service.generate_kiosk_token("checkin", today_str)
+    checkout_token = qr_service.generate_kiosk_token("checkout", today_str)
+    
+    # Calculate expiration (midnight tonight)
+    tomorrow = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
     
     return {
-        "checkin_qr": checkin_url,
-        "checkout_qr": checkout_url,
+        "checkin_qr": checkin_token,
+        "checkout_qr": checkout_token,
+        "expires_at": tomorrow.isoformat(),
+        "date": today_str,
         "department_id": department_id,
         "location_name": location_name,
         "department": {

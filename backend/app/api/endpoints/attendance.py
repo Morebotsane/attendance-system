@@ -3,6 +3,8 @@ Attendance endpoints for check-in/check-out operations
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from datetime import datetime, timedelta
@@ -23,8 +25,10 @@ from app.services.geofence_service import geofence_service
 from app.services.photo_service import photo_service
 from app.tasks.notifications import send_sms_task, send_email_task
 from app.templates.notifications import templates, format_phone_number
+from app.api.endpoints.auth import decode_token
 
 router = APIRouter()
+security = HTTPBearer(auto_error=False)
 
 
 def serialize_for_json(obj):
@@ -66,10 +70,15 @@ async def check_in(
     longitude: float = Form(...),
     device_id: str = Form(...),
     photo: UploadFile = File(...),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Process employee check-in with QR code, geolocation, and photo
+    
+    Supports TWO QR flows:
+    1. Kiosk token (daily rotating, requires JWT auth)
+    2. Employee badge QR (encrypted employee_id, no auth required)
     
     Steps:
     1. Validate QR code and get employee
@@ -78,19 +87,54 @@ async def check_in(
     4. Process and store photo
     5. Create attendance record
     6. Log action in audit trail
-    7. Send SMS notification
+    7. Send SMS + Email notifications
     """
     
-    # 1. Decode and validate QR code
-    qr_result = qr_service.decode_qr_data(qr_code_data)
+    # 1. Validate QR code (try kiosk token first, then employee badge)
+    kiosk_validation = qr_service.validate_kiosk_token(qr_code_data, "checkin")
     
-    if not qr_result.get("valid"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid QR code"
-        )
-    
-    employee_id = qr_result["employee_id"]
+    if kiosk_validation["valid"]:
+        # Valid kiosk token - requires JWT authentication
+        if not credentials:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Kiosk check-in requires authentication. Please log in to the app."
+            )
+        
+        # Decode JWT to get employee_id
+        try:
+            token = credentials.credentials
+            payload = decode_token(token)
+            employee_id = payload.get("sub")
+            if not employee_id:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid authentication token"
+                )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Authentication failed: {str(e)}"
+            )
+        
+        qr_result = {
+            "valid": True,
+            "employee_id": employee_id,
+            "type": "kiosk_token",
+            "date": kiosk_validation["date"]
+        }
+    else:
+        # Not a valid kiosk token - try employee badge QR (backward compatibility)
+        qr_result = qr_service.decode_qr_data(qr_code_data)
+        
+        if not qr_result.get("valid"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid QR code. Please scan a valid employee badge or kiosk QR."
+            )
+        
+        employee_id = qr_result["employee_id"]
+        qr_result["type"] = "employee_badge"
     
     # Get employee
     result = await db.execute(
@@ -170,7 +214,6 @@ async def check_in(
         )
     
     # 5. Create attendance record
-    # Serialize validation metadata to ensure JSON compatibility
     validation_metadata = serialize_for_json({
         "geofence": geo_validation,
         "qr_validation": qr_result
@@ -244,20 +287,62 @@ async def check_out(
     longitude: float = Form(...),
     device_id: str = Form(...),
     photo: UploadFile = File(...),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: AsyncSession = Depends(get_db)
 ):
-    """Process employee check-out"""
+    """
+    Process employee check-out
     
-    # Decode QR code
-    qr_result = qr_service.decode_qr_data(qr_code_data)
+    Supports TWO QR flows:
+    1. Kiosk token (daily rotating, requires JWT auth)
+    2. Employee badge QR (encrypted employee_id, no auth required)
+    """
     
-    if not qr_result.get("valid"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid QR code"
-        )
+    # 1. Validate QR code (try kiosk token first, then employee badge)
+    kiosk_validation = qr_service.validate_kiosk_token(qr_code_data, "checkout")
     
-    employee_id = qr_result["employee_id"]
+    if kiosk_validation["valid"]:
+        # Valid kiosk token - requires JWT authentication
+        if not credentials:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Kiosk check-out requires authentication. Please log in to the app."
+            )
+        
+        # Decode JWT to get employee_id
+        try:
+            token = credentials.credentials
+            payload = decode_token(token)
+            employee_id = payload.get("sub")
+            if not employee_id:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid authentication token"
+                )
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Authentication failed: {str(e)}"
+            )
+        
+        qr_result = {
+            "valid": True,
+            "employee_id": employee_id,
+            "type": "kiosk_token",
+            "date": kiosk_validation["date"]
+        }
+    else:
+        # Not a valid kiosk token - try employee badge QR (backward compatibility)
+        qr_result = qr_service.decode_qr_data(qr_code_data)
+        
+        if not qr_result.get("valid"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid QR code. Please scan a valid employee badge or kiosk QR."
+            )
+        
+        employee_id = qr_result["employee_id"]
+        qr_result["type"] = "employee_badge"
     
     # Find active attendance record
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
