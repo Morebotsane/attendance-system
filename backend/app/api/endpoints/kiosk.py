@@ -17,23 +17,25 @@ async def get_kiosk_qr(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Generate QR code data for kiosk display
+    Generate QR codes for kiosk display - BOTH check-in and check-out
     
-    The QR contains a URL that employees scan with their phones
-    URL includes location/department information for pre-validation
+    Returns TWO QR codes:
+    - checkin_qr: URL for check-in flow
+    - checkout_qr: URL for check-out flow
     
     Args:
         department_id: Optional UUID of department where kiosk is located
         
     Returns:
-        qr_data: URL to encode in QR (frontend generates QR image from this)
-        url: Same as qr_data (for clarity)
+        checkin_qr: URL to check-in page
+        checkout_qr: URL to check-out page
         department: Department info if department_id provided
         location_name: Human-readable location name
     """
     
-    # Base check-in URL (frontend URL)
-    base_url = "https://5173-firebase-attendance-system-1773135120418.cluster-vpxjqdstfzgs6qeiaf7rdlsqrc.cloudworkstations.dev/check-in"
+    # Base URLs (frontend URLs)
+    base_checkin = "https://5173-firebase-attendance-system-1773135120418.cluster-vpxjqdstfzgs6qeiaf7rdlsqrc.cloudworkstations.dev/check-in"
+    base_checkout = "https://5173-firebase-attendance-system-1773135120418.cluster-vpxjqdstfzgs6qeiaf7rdlsqrc.cloudworkstations.dev/check-out"
     
     department = None
     location_name = "General"
@@ -53,15 +55,17 @@ async def get_kiosk_qr(
         
         location_name = department.name
         
-        # Build URL with department parameter
-        url = f"{base_url}?dept={department_id}"
+        # Build URLs with department parameter
+        checkin_url = f"{base_checkin}?dept={department_id}"
+        checkout_url = f"{base_checkout}?dept={department_id}"
     else:
         # General kiosk (no specific department)
-        url = base_url
+        checkin_url = base_checkin
+        checkout_url = base_checkout
     
     return {
-        "qr_data": url,
-        "url": url,
+        "checkin_qr": checkin_url,
+        "checkout_qr": checkout_url,
         "department_id": department_id,
         "location_name": location_name,
         "department": {
@@ -82,14 +86,6 @@ async def get_kiosk_locations(
 ):
     """
     Get list of all departments/locations for kiosk setup
-    
-    Use this to:
-    - Configure which kiosk is at which location
-    - Admin panel for kiosk management
-    - Dropdown in kiosk settings
-    
-    Returns:
-        List of departments with location info
     """
     result = await db.execute(
         select(Department)
