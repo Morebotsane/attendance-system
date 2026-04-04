@@ -6,7 +6,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 import uuid
 import enum
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.db.base import Base
 
@@ -62,9 +62,9 @@ class KioskSession(Base):
     created_longitude = Column(Float, nullable=True)
     
     # Timestamps
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    expires_at = Column(DateTime, nullable=False)  # Auto-set to +5 minutes
-    completed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(DateTime(timezone=True), nullable=False)  # Auto-set to +5 minutes
+    completed_at = Column(DateTime(timezone=True), nullable=True)
     
     # Relationships
     employee = relationship("Employee", back_populates="kiosk_sessions")
@@ -72,6 +72,6 @@ class KioskSession(Base):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # Auto-set expiration to 5 minutes from now
+        # Auto-set expiration to 5 minutes from now (timezone-aware UTC)
         if not self.expires_at:
-            self.expires_at = datetime.utcnow() + timedelta(minutes=5)
+            self.expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)

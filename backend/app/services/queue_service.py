@@ -4,7 +4,7 @@ Handles session creation, queue positioning, and status updates
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, update
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 from typing import Optional
 
@@ -54,7 +54,7 @@ class QueueService:
                     KioskSession.employee_id == uuid.UUID(employee_id),
                     KioskSession.session_type == session_type,
                     KioskSession.status.in_([SessionStatus.WAITING, SessionStatus.ACTIVE]),
-                    KioskSession.expires_at > datetime.utcnow()
+                    KioskSession.expires_at > datetime.now(timezone.utc)
                 )
             )
         )
@@ -69,7 +69,7 @@ class QueueService:
             and_(
                 KioskSession.session_type == session_type,
                 KioskSession.status.in_([SessionStatus.WAITING, SessionStatus.ACTIVE]),
-                KioskSession.expires_at > datetime.utcnow()
+                KioskSession.expires_at > datetime.now(timezone.utc)
             )
         )
         
@@ -128,7 +128,7 @@ class QueueService:
             return {"error": "Session not found"}
         
         # Check if expired
-        if session.expires_at < datetime.utcnow():
+        if session.expires_at < datetime.now(timezone.utc):
             session.status = SessionStatus.EXPIRED
             await db.commit()
             return {"error": "Session expired", "status": "EXPIRED"}
@@ -162,7 +162,7 @@ class QueueService:
                 KioskSession.status == SessionStatus.ACTIVE,
                 KioskSession.session_type == session_type,
                 KioskSession.queue_position == 1,
-                KioskSession.expires_at > datetime.utcnow()
+                KioskSession.expires_at > datetime.now(timezone.utc)
             )
         )
         
@@ -220,7 +220,7 @@ class QueueService:
         
         # Mark completed
         session.status = SessionStatus.COMPLETED
-        session.completed_at = datetime.utcnow()
+        session.completed_at = datetime.now(timezone.utc)
         
         await db.commit()
         
@@ -270,7 +270,7 @@ class QueueService:
         query = update(KioskSession).where(
             and_(
                 KioskSession.status.in_([SessionStatus.WAITING, SessionStatus.ACTIVE]),
-                KioskSession.expires_at < datetime.utcnow()
+                KioskSession.expires_at < datetime.now(timezone.utc)
             )
         ).values(status=SessionStatus.EXPIRED)
         
@@ -293,7 +293,7 @@ class QueueService:
             and_(
                 KioskSession.status == SessionStatus.WAITING,
                 KioskSession.session_type == session_type,
-                KioskSession.expires_at > datetime.utcnow()
+                KioskSession.expires_at > datetime.now(timezone.utc)
             )
         ).order_by(KioskSession.created_at)
         
@@ -325,7 +325,7 @@ class QueueService:
         data = {
             "session_id": session_id,
             "type": session_type.value,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
         json_data = json.dumps(data)
